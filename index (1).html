@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cấu trúc rẽ nhánh dạng thiếu</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; min-height: 100svh; padding: 24px 16px; background: #fff; color: #171b20; font-family: Arial, sans-serif; }
+  main { width: min(100%, 960px); margin: auto; text-align: center; }
+  h1 { margin: 0 0 8px; font-size: clamp(22px, 3.4vw, 36px); line-height: 1.3; }
+  svg { display: block; width: 100%; height: min(70svh, 700px); margin: auto; overflow: visible; }
+  .routes path { fill: none; stroke: #353535; stroke-width: 2.5; stroke-linejoin: round; stroke-linecap: round; }
+  .routes .progress { stroke: #1675dd; stroke-width: 5; }
+  .condition { fill: #00aa98; }
+  .block { fill: #fff477; }
+  .condition.active { fill: #00bfa9; filter: drop-shadow(0 0 9px #00bfa980); }
+  .block.active { fill: #ffdd42; stroke: #d69c00; stroke-width: 2; filter: drop-shadow(0 0 10px #f6c53599); }
+  text { text-anchor: middle; dominant-baseline: middle; font-size: 21px; fill: #111; }
+  .condition-label { fill: white; font-weight: 600; }
+  .branch-label { font-size: 20px; }
+  .branch-label.active { fill: #1265c1; font-weight: 700; }
+  .arrows { fill: #353535; }
+  #dot { fill: #1675dd; stroke: white; stroke-width: 3; filter: drop-shadow(0 0 5px #1675dd); pointer-events: none; }
+  #status { min-height: 3em; margin: 8px 0 0; font-size: clamp(17px, 2.5vw, 23px); line-height: 1.5; }
+  @media (prefers-reduced-motion: reduce) { .active, #dot { filter: none; } }
+</style>
+</head>
+<body>
+<main>
+  <h1>Cấu trúc rẽ nhánh dạng thiếu</h1>
+  <svg viewBox="30 0 520 530" role="img" aria-labelledby="diagram-title diagram-desc">
+    <title id="diagram-title">Cấu trúc rẽ nhánh dạng thiếu</title>
+    <desc id="diagram-desc">Nhánh đúng thực hiện khối lệnh, nhánh sai đi vòng bên phải và bỏ qua khối lệnh; hai nhánh hợp nhất bên dưới. Hai lượt đúng và sai tự động chạy lần lượt, mỗi lượt 6,4 giây.</desc>
+    <!-- Đường nằm dưới các khối; chấm dùng chính các đường này để đi liên tục qua tâm khối. -->
+    <g class="routes">
+      <path id="entry" d="M170 25 V140"/>
+      <path id="branchTrue" d="M170 140 V312"/>
+      <path id="branchFalse" d="M170 140 H450 V440 H170 V500"/>
+      <path id="exitTrue" d="M170 312 V500"/>
+      
+    </g>
+    <polygon id="condition" class="condition" points="170,85 280,140 170,195 60,140"/>
+    <rect id="block1" class="block" x="100" y="280" width="140" height="64"/>
+    
+    <g class="arrows" aria-hidden="true">
+      <path d="M164 73 L170 85 L176 73 Z"/>
+      <path d="M164 268 L170 280 L176 268 Z"/>
+      <path d="M164 488 L170 500 L176 488 Z"/>
+      <path d="M182 434 L170 440 L182 446 Z"/>
+    </g>
+    <text class="condition-label" x="170" y="140">Điều kiện</text>
+    <text x="170" y="312">Khối lệnh</text>
+    <text id="labelTrue" class="branch-label" x="204" y="231">Đúng</text>
+    <text id="labelFalse" class="branch-label" x="350" y="118">Sai</text>
+    <circle id="dot" r="7" cx="170" cy="25" aria-hidden="true"/>
+  </svg>
+  <p id="status" role="status" aria-live="polite" aria-atomic="true"></p>
+</main>
+<script>
+'use strict';
+const full = false;
+const $ = id => document.getElementById(id);
+const dot = $('dot');
+const status = $('status');
+const condition = $('condition');
+const blocks = [$('block1'), $('block2')].filter(Boolean);
+const labels = [$('labelTrue'), $('labelFalse')];
+const routes = {};
+for (const path of document.querySelectorAll('.routes path')) {
+  const progress = path.cloneNode();
+  progress.removeAttribute('id');
+  progress.classList.add('progress');
+  const length = path.getTotalLength();
+  progress.style.strokeDasharray = `${length} ${length}`;
+  progress.style.strokeDashoffset = length;
+  path.parentNode.append(progress);
+  routes[path.id] = { path, progress, length };
+}
+// Chỉ hai kịch bản cố định, mỗi lượt chọn tối đa một khối lệnh.
+const turns = [
+  { branch: 'branchTrue', exit: 'exitTrue', block: 0,
+    message: full ? 'Điều kiện đúng → Thực hiện khối lệnh 1.' : 'Điều kiện đúng → Thực hiện khối lệnh.' },
+  { branch: 'branchFalse', exit: full ? 'exitFalse' : null, block: full ? 1 : null,
+    message: full ? 'Điều kiện sai → Thực hiện khối lệnh 2.' : 'Điều kiện sai → Bỏ qua khối lệnh.' }
+];
+function stageAt(time, turn) {
+  if (time < 900) return 'entry';
+  if (time < 1500) return 'check';
+  if (!turn.exit) return time < 5500 ? 'branch' : 'done';
+  if (time < 3000) return 'branch';
+  if (time < 3700) return 'execute';
+  return time < 5500 ? 'exit' : 'done';
+}
+function selfCheck() {
+  const assert = (ok, message) => { if (!ok) throw new Error(message); };
+  assert(turns[0].block === 0 && turns[1].block === (full ? 1 : null), 'Sai khối lệnh');
+  for (const turn of turns) {
+    const sequence = [0, 900, 1500, 3000, 3700, 5500].map(t => stageAt(t, turn));
+    assert(sequence.join(',') === (turn.exit ? 'entry,check,branch,execute,exit,done' : 'entry,check,branch,branch,branch,done'), 'Sai trình tự');
+    const end = routes.entry.path.getPointAtLength(routes.entry.length);
+    const start = routes[turn.branch].path.getPointAtLength(0);
+    assert(Math.hypot(end.x - start.x, end.y - start.y) < 0.01, 'Đường vào bị đứt');
+    if (turn.exit) {
+      const from = routes[turn.branch].path.getPointAtLength(routes[turn.branch].length);
+      const to = routes[turn.exit].path.getPointAtLength(0);
+      assert(Math.hypot(from.x - to.x, from.y - to.y) < 0.01, 'Đường ra bị đứt');
+    }
+  }
+  assert([0, 1, 2, 3].map(n => n % 2).join(',') === '0,1,0,1', 'Sai thứ tự lặp');
+}
+selfCheck();
+function move(id, fraction) {
+  const route = routes[id];
+  const amount = Math.max(0, Math.min(1, fraction));
+  route.progress.style.strokeDashoffset = route.length * (1 - amount);
+  const point = route.path.getPointAtLength(route.length * amount);
+  dot.setAttribute('cx', point.x);
+  dot.setAttribute('cy', point.y);
+}
+let lastLap = -1;
+let lastStage = '';
+const start = performance.now();
+function frame(now) {
+  const elapsed = Math.max(0, now - start);
+  const lap = Math.floor(elapsed / 6400);
+  const time = elapsed % 6400;
+  const index = lap % 2;
+  const turn = turns[index];
+  const stage = stageAt(time, turn);
+  if (lap !== lastLap) {
+    for (const route of Object.values(routes)) route.progress.style.strokeDashoffset = route.length;
+    [condition, ...blocks, ...labels].forEach(node => node.classList.remove('active'));
+    lastStage = '';
+    lastLap = lap;
+  }
+  condition.classList.toggle('active', time >= 900);
+  labels[index].classList.toggle('active', time >= 1500);
+  if (turn.block !== null) blocks[turn.block].classList.toggle('active', time >= 3000);
+  if (stage === 'entry') move('entry', time / 900);
+  else {
+    move('entry', 1);
+    if (time >= 1500) move(turn.branch, (time - 1500) / (turn.exit ? 1500 : 4000));
+    if (turn.exit && time >= 3700) move(turn.exit, (time - 3700) / 1800);
+  }
+  if (stage !== lastStage) {
+    status.textContent = stage === 'done' ? turn.message
+      : stage === 'entry' ? `Bắt đầu lượt minh họa: điều kiện ${index === 0 ? 'đúng' : 'sai'}.`
+      : stage === 'check' ? 'Đang kiểm tra điều kiện…'
+      : stage === 'branch' ? `Đi theo nhánh ${index === 0 ? 'Đúng' : 'Sai'}…`
+      : stage === 'execute' ? `Đang thực hiện ${full ? `khối lệnh ${turn.block + 1}` : 'khối lệnh'}…`
+      : 'Tiếp tục theo đường chung…';
+    document.body.dataset.turn = index === 0 ? 'true' : 'false';
+    document.body.dataset.phase = stage;
+    lastStage = stage;
+  }
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
